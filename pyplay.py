@@ -1,9 +1,23 @@
 #!/usr/local/bin/python
 
+# 13 Aug 17 version
+# Merging with afplay version
+# 5 Aug 17 version
+# Modified to run on Raspberry Pi using omxplayer instead of afplay
+# Found bug - cannot cope with brackets in file names - FIXED!
+# - cannot cope with ampersands either! - FIXED
+# - make titles longer - FIXED
+# - add support for .OGG audio files - FIXED
+
+# If using GUI change clock display to show seconds with %X format.
+
 # PyPlay radio playout script by Giles Booth @blogmwiki
-# written in Python2 to run on MacOS X without installing Python3
-# only works in OS X as uses afplay to play audio files
-# requires audio files in same directory as this script
+# Written in Python2. Should not require any other modules to be installed.
+# Requires audio files in same directory as this script.
+# Original version ran on Mac using afplay. Written in Python2 to run on 
+# MacOS X without installing Python3
+# In OS X as uses afplay to play audio files
+# In Linux we use the omxplayer.
 
 # V 4.1 has horrible kludge to cope with multiple backslashes in array
 # Version 4 fixes bugs replacing escaped spaces in display names and
@@ -18,6 +32,7 @@ import time
 import subprocess
 import re
 import datetime
+import sys
 
 playlist = ""
 
@@ -30,32 +45,69 @@ def showTracks():
     os.system('clear')
     t = str(datetime.datetime.now().time())
     t = t[0:8]
-    print '\033[37;44mWelcome to PyPlay!        \t\t\t',t,'\033[0m'
-    print ""
-    print '\033[0;30;47m# Track                         Length  Status  Out time \033[0m'
+    print '\033[37;44mWelcome to PyPlay!     \t\t\tUpdated ',t,'\033[0m'
+    print ''
+    print '\033[0;30;47m  # File name                           Length  Status  Out time \033[0m'
     for z in range(len(trackList)):
         highlightOn = ""
         highlightOff = ""
         if "PLAYING" in trackList[z][4]:
             highlightOn = "\033[31;103m"
             highlightOff = "\033[0m"
-        print highlightOn, z+1, trackList[z][1], "\t", trackList[z][3], "\t", trackList[z][4], highlightOff
-    print '\033[0,34mPress ctrl+c to stop playing, q to quit\033[0m'
+        print highlightOn, leadingSpace(str(z+1)), trackList[z][1], "\t", timeLeadingSpace(trackList[z][3]), "\t", trackList[z][4], highlightOff
+    
+# function to display the user commands
+def showUI():
+    if sys.platform.startswith('linux'):
+        # Linux platform
+        print '\033[97;42m    KEYS:    q stop | - + vol | space pause | arrows seek        \033[0m'
+    elif sys.platform == 'darwin':
+        # Mac OSX platform
+        print '\033[0,34mPress ctrl+c to stop playing, q to quit\033[0m'
+    else:
+        # Unsupported platform
+        raise RuntimeError('Sorry the {0} platform is not supported by PyPlay'.format(sys.platform))
 
-# returns a float with duration of track in seconds
+# returns duration of track in seconds
 def getTrackLength(thing):
     bumf = ""
     bumfList = []
     trackLength = ""
     snog = trackArray[thing]
-    foo = "afinfo " + snog
-    bumf = subprocess.check_output(foo, shell=True)
-    bumfList = bumf.split('\n')
-    for line in bumfList:
-        if line.startswith('estimated duration'):
-            duration = line
-    trackLength = re.findall(r"[-+]?\d*\.\d+|\d+", duration)
-    trackSecs = float(trackLength[0])
+    #foo = "omxplayer -i " + snog
+
+    if sys.platform.startswith('linux'):
+            # Linux platform
+            foo = "no_omxplayer -i " + snog
+            try:
+                bumf = subprocess.check_output(foo, shell=True, stderr=subprocess.STDOUT)
+            except OSError:
+                print "%s not found on path" % foo
+                trackSecs = 0
+            except Exception, e:
+                bumf = str(e.output) # horrible kludge to get round exceptions but capture text
+                bumfList = bumf.split('\n')
+
+                for line in bumfList:
+                    #        print line # debug line
+                    if line.startswith('  Duration'):
+                        line_mins = int(line[15:17])
+                        line_secs = int(line[18:20])
+                        trackSecs = line_secs + (line_mins*60)
+    elif sys.platform == 'darwin':
+            # Mac OSX platform
+            foo = "afinfo " + snog
+
+            bumf = subprocess.check_output(foo, shell=True)
+            bumfList = bumf.split('\n')
+            for line in bumfList:
+                if line.startswith('estimated duration'):
+                    duration = line
+                    trackLength = re.findall(r"[-+]?\d*\.\d+|\d+", duration)
+                    trackSecs = float(trackLength[0])
+    else:
+            # Unsupported platform
+            raise RuntimeError('Sorry the {0} platform is not supported by PyPlay'.format(sys.platform))
     return trackSecs
 
 # returns string with out time in HH:MM:SS format
@@ -91,6 +143,18 @@ def leadingZero(n):
             n = '0' + n
     return n
 
+# adds a leading space to single character strings
+def leadingSpace(n):
+    if len(n) == 1:
+            n = ' ' + n
+    return n
+
+# adds a leading space to times shorter than 10 minutes
+def timeLeadingSpace(n):
+    if len(n) == 4:
+            n = ' ' + n
+    return n
+
 # makes strings a fixed length
 def colform(txt, width):
     if len(txt) > width:
@@ -113,44 +177,56 @@ def clearStatus():
     for y in range(len(trackList)):
         trackList[y][4] = ''
 
-# plays the track using OS X afplay command
+# plays the track using OS X afplay command or omxplayer on Linux/Raspberry Pi
 # You could try VLC or MPD if using Linux
 def playTrack(track):
     song = trackArray[track-1]
-    trackString = "afplay " + song
+    if sys.platform.startswith('linux'):
+            # Linux platform
+            trackString = "omxplayer " + song + " > /dev/null"  # stop omxplayer output appearing on screen whilst playing
+    elif sys.platform == 'darwin':
+            # Mac OSX platform
+            trackString = "afplay " + song + " > /dev/null"  # stop afplay output appearing on screen whilst playing
+    else:
+            # Unsupported platform
+            raise RuntimeError('Sorry the {0} platform is not supported by PyPlay'.format(sys.platform))
+
     os.system(trackString)
 
 # if no playlist.m3u file found, make one from audio files found in directory
-# edit audioFileTypes list to add more file types as needed
+# edit audioFileTypes list to add more file types as needed (but don't add 'aif' because reasons)
 if not os.path.exists('playlist.m3u'):
-    audioFileTypes = ['.mp3','.MP3','.wav','.WAV','.m4a','.M4A','.aiff','.AIFF','aif','AIF']
+    # audioFileTypes should be set accordint to the play cmd but this way the .m3u file is not missing ogg music
+    audioFileTypes = ['.mp3','.MP3','.wav','.WAV','.m4a','.M4A','.aiff','.AIFF','.ogg','.OGG']
+    # TODO: check if the player can play the file type.
     os.system('clear')
-    print "No playlist.m3u file found so making you one with these files:"
+    print "No playlist.m3u file found so I am making you one with these files:"
     print
     dirList = os.listdir(".")
     newDir = []
     for x in range(len(dirList)):
         for q in audioFileTypes:
             if q in dirList[x]:
+                print(dirList[x])
                 newDir.append(dirList[x])
     fo = open("playlist.m3u", "w")
     fo.write("#EXTM3U\n\n")
     for item in newDir:
-        print item
+#        print item
         fo.write("%s\n" % item)
     fo.close()
-    time.sleep(3)
+    time.sleep(2)
 
 #open the playlist file and read its contents into a list
 playlist = open('playlist.m3u')
 trackArray = playlist.readlines()
 
 # clean up the track list array of metadata and \n characters
-# iterate over list in reverse order as deleteing items from list as we go
+# iterate over list in reverse order as deleting items from list as we go
 for i in range(len(trackArray)-1,-1,-1):
     if trackArray[i].startswith('\n') or trackArray[i].startswith('#'):
         trackArray.pop(i)
-    repl = {" ": "\ ", "\'": "\\'"} # define desired replacements here
+    repl = {" ": "\ ", "\'": "\\'","&": "\&","(": "\(",")": "\)"} # define desired replacements here
     # use these three lines to do the replacement
     repl = dict((re.escape(k), v) for k, v in repl.iteritems())
     pattern = re.compile("|".join(repl.keys()))
@@ -170,20 +246,24 @@ for i in range(len(trackArray)-1,-1,-1):
 
 # read tracks into array to hold track info in format:
 # filename - display name - duration as float - display duration - track status
+print '\nScanning audio files to calculate durations:'
 trackList = []
 for a in range(len(trackArray)):
-    rep = {"\ ": " ", "\\'": "\'"} # define desired replacements here
+    rep = {"\ ": " ", "\\'": "\'", "\&": "&","\(": "(","\)": ")"} # define desired replacements here
     # use these three lines to do the replacement
     rep = dict((re.escape(k), v) for k, v in rep.iteritems())
     pattern = re.compile("|".join(rep.keys()))
     newName = pattern.sub(lambda m: rep[re.escape(m.group(0))], trackArray[a])
-    trackList.append([trackArray[a],colform(newName,20),getTrackLength(a),displayDuration(getTrackLength(a)),"status"])
+    print a+1,newName
+    thisTrackLength = getTrackLength(a)
+    trackList.append([trackArray[a],colform(newName,30),thisTrackLength,displayDuration(thisTrackLength),"status"])
 
 # the main program loop
 while True:
     clearStatus()
     showTracks()
-    trackNo = raw_input('\nWhich track would you like to play? ')
+    showUI()
+    trackNo = raw_input('\nWhich track # would you like to play? q to quit ')
     if trackNo == 'q':
         break
     elif trackNo == "":
@@ -199,4 +279,5 @@ while True:
         eT = getEndTime(int(trackNo))
         trackList[int(trackNo)-1][4] = 'PLAYING ' + eT
         showTracks()
+        showUI()
         playTrack(int(trackNo))
